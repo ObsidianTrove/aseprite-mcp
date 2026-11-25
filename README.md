@@ -4,13 +4,19 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
-An [MCP](https://modelcontextprotocol.io) server that lets AI agents create pixel-art game
-assets in [Aseprite](https://www.aseprite.org) and export them straight into
+An [MCP](https://modelcontextprotocol.io) server that lets AI agents create **placeholder**
+pixel-art game assets in [Aseprite](https://www.aseprite.org) and export them straight into
 [Godot 4](https://godotengine.org) projects.
 
 Sprites, animations, palettes, palette-swapped variants and tilesets, driven from any
 MCP-capable client: Claude Code, OpenAI Codex, Google Antigravity, LM Studio with local
 models, and others.
+
+> [!IMPORTANT]
+> This project is for placeholder art: quick, iterable assets to build and test a game
+> with while final art is made. Everything it writes is marked as an AI-generated
+> placeholder, final art replaces each file in place without refactoring, and a release
+> audit confirms that no placeholder ships. See [Placeholder assets](#placeholder-assets).
 
 ![Three slime variants with an idle animation, built entirely through MCP tool calls](docs/images/showcase.gif)
 
@@ -18,6 +24,8 @@ models, and others.
 
 ## Features
 
+- **Placeholder tracking**: every sprite and export is marked as AI-generated, final art is
+  never modified, and an audit command lists what still needs replacing before release
 - **Pixel-level drawing** with an ASCII grid op that language models handle reliably, plus
   rectangles, lines, circles and individual pixels
 - **Animation**: duplicate frames, set per-frame timing, tag named animations with
@@ -128,8 +136,8 @@ Cursor, Cline, Continue, Claude Desktop and most other clients accept the same
 
 ### Tool approval
 
-Tools carry standard MCP annotations: `sprite_info` and `preview` are read-only; every other
-tool writes files. Clients use these hints when deciding what to run without asking. The
+Tools carry standard MCP annotations: `sprite_info`, `preview` and `placeholder_report` are
+read-only; every other tool writes files. Clients use these hints when deciding what to run without asking. The
 Codex example auto-approves the read-only tools; in Claude Code you can allow
 `mcp__aseprite__*` in your permission settings for unattended runs.
 
@@ -151,6 +159,7 @@ Codex example auto-approves the read-only tools; in Claude Code you can allow
 | `export_godot_spriteframes` | Export PNG + `SpriteFrames` `.tres` into a Godot project. |
 | `export_tileset` | Export an extruded tileset PNG, optionally with a Godot `TileSet` `.tres`. |
 | `batch_export` | Re-export every `.aseprite` file in a folder tree into a Godot project. |
+| `placeholder_report` | List every placeholder asset under a folder, with the sizes and animation names its replacement must match. |
 | `run_lua` | Run arbitrary Aseprite Lua. Disabled by default. |
 
 Conventions: paths are absolute; frames are 1-based, matching the Aseprite UI; colors are
@@ -170,15 +179,52 @@ The `rows` drawing op describes pixel art as text, one character per pixel:
 
 ## Example prompts
 
-> Create a 16×16 knight sprite using the Sweetie 16 palette in `C:\Games\Quest\art\knight.aseprite`.
-> Add a four-frame walk cycle tagged `walk`, preview it, and fix anything that looks off.
+> Create a 16×16 placeholder knight using the Sweetie 16 palette in
+> `C:\Games\Quest\art\placeholder\characters\knight.aseprite`. Add a four-frame walk cycle
+> tagged `walk`, preview it, and fix anything that looks off.
 
-> Make red and blue variants of `C:\Games\Quest\art\enemies\slime.aseprite` with
-> `palette_swap`, then export all three to my Godot project at `C:\Games\Quest` as
+> Make red and blue variants of `C:\Games\Quest\art\placeholder\enemies\slime.aseprite`
+> with `palette_swap`, then export all three to my Godot project at `C:\Games\Quest` as
 > SpriteFrames.
 
-> Slice `C:\Games\Quest\art\terrain.aseprite` into 16×16 tiles with 1 px extrusion and
-> create a Godot TileSet in `C:\Games\Quest\assets\tiles`.
+> Slice `C:\Games\Quest\art\placeholder\tiles\terrain.aseprite` into 16×16 tiles with 1 px
+> extrusion and create a Godot TileSet in `C:\Games\Quest\assets\tiles`.
+
+> Which assets in `C:\Games\Quest` are still placeholders, and what does the artist need to
+> match for each one?
+
+## Placeholder assets
+
+The server is built for placeholder art, and it keeps placeholders identifiable from the
+moment they are created until they are replaced:
+
+- **Everything it writes is marked.** `.aseprite` files carry a sprite property, PNGs a
+  metadata chunk, Godot resources `metadata/placeholder = true`, and sprite sheet JSON a
+  `placeholder` flag. The marker lives inside each file, so replacing the file removes it.
+- **Final art is never touched.** Unmarked files count as final: the server will not modify
+  them, and placeholder exports will not overwrite them.
+- **Final art drops in place.** Placeholder and final sources live in parallel folders and
+  export to the same `res://` paths, so scenes and code need no changes when art is swapped.
+- **Releases are checked.** `aseprite-mcp-audit` lists every remaining placeholder and exits
+  non-zero while any are left, for use before submitting to Steam, the App Store or Google
+  Play, and in CI.
+
+```
+my-game/
+  art/placeholder/enemies/slime.aseprite   AI-generated source (marked)
+  art/final/enemies/slime.aseprite         hand-made source, same relative path
+  assets/sprites/enemies/slime.png/.tres   one export; scenes reference only this
+  store/                                   storefront art, audited before release
+```
+
+```sh
+uv run aseprite-mcp-audit /path/to/my-game/assets /path/to/my-game/store
+```
+
+[docs/placeholder-workflow.md](docs/placeholder-workflow.md) covers the markers, the
+replacement contract (names, animation tags, frame and tile sizes), swapping in final art,
+CI setup and a storefront checklist. [examples/game-layout](examples/game-layout) is a
+folder skeleton to copy into a new Godot project.
 
 ## Using the assets in Godot
 
@@ -187,6 +233,9 @@ The `rows` drawing op describes pixel art as text, one character per pixel:
    an animation by its Aseprite tag name.
 3. For tilesets, use `export_tileset` with `godot_project` and assign the generated `.tres` to
    a `TileMapLayer`. The atlas margins and separation already account for the extrusion.
+4. Placeholder resources carry `metadata/placeholder = true`; check it in code with
+   `resource.get_meta("placeholder", false)`, for example to flag placeholders in debug
+   builds.
 
 Recommended project settings for crisp pixel art on desktop and mobile:
 
@@ -204,8 +253,10 @@ Keep exports at scale 1 and let the viewport do the scaling.
 - Every path must be absolute and inside a folder listed in `ASEPRITE_MCP_ROOTS`; relative
   paths and `..` traversal outside a root are rejected.
 - Godot exports are confined to the given project folder.
-- `run_lua` can execute arbitrary code with your user's permissions and is off unless
-  `ASEPRITE_MCP_ALLOW_LUA=1` is set.
+- Files without the placeholder marker are treated as final art and are never modified or
+  overwritten. See [Placeholder assets](#placeholder-assets).
+- `run_lua` can execute arbitrary code with your user's permissions, bypasses placeholder
+  marking, and is off unless `ASEPRITE_MCP_ALLOW_LUA=1` is set.
 - The server makes no network requests.
 
 ## Local models
@@ -223,11 +274,12 @@ attention and a quantized KV cache are good starting points.
 ## Development
 
 ```sh
-uv sync                    # install runtime and dev dependencies
-uv run pytest              # unit + integration tests
-uv run pytest tests/unit   # tests that need no Aseprite installation
-uv run ruff check .        # lint
-uv run ruff format .       # format
+uv sync                         # install runtime and dev dependencies
+uv run pytest                   # unit + integration tests
+uv run pytest tests/unit        # tests that need no Aseprite installation
+uv run ruff check .             # lint
+uv run ruff format .            # format
+uv run aseprite-mcp-audit PATH  # list placeholder assets; exit 1 if any
 ```
 
 Integration tests start the server as a subprocess and exercise every tool over the MCP
@@ -239,24 +291,33 @@ is not found, which is the case in CI.
 
 ```
 src/aseprite_mcp/
-  server.py     MCP tool definitions
-  aseprite.py   Aseprite CLI and Lua bridge
-  godot.py      Godot .tres generation
-  paths.py      path validation
-  config.py     environment configuration
-  lua/          one script per tool, plus shared helpers in common.lua
+  server.py       MCP tool definitions
+  aseprite.py     Aseprite CLI and Lua bridge
+  godot.py        Godot .tres generation
+  placeholder.py  placeholder markers, final-art guards and the audit
+  paths.py        path validation
+  config.py       environment configuration
+  lua/            one script per tool, plus shared helpers in common.lua
 tests/
-  unit/         pure-Python tests
-  integration/  end-to-end tests over MCP stdio
-examples/       client configuration and a scripted showcase
+  unit/           pure-Python tests
+  integration/    end-to-end tests over MCP stdio
+examples/
+  clients/        client configuration
+  game-layout/    folder skeleton for a game project using placeholder art
+  showcase.py     scripted showcase
+docs/
+  placeholder-workflow.md   marking, replacing and auditing placeholder assets
 ```
 
 ### Adding a tool
 
 1. Add `src/aseprite_mcp/lua/<tool>.lua` following the pattern in `sprite_info.lua`: call
-   `C.run(function(p) ... end)` and return a table.
+   `C.run(function(p) ... end)` and return a table. Save sprites with `C.save`, which
+   applies the placeholder marker.
 2. Add a function decorated with `@tool()` in `server.py` that validates paths and calls
-   `aseprite.lua("<tool>", ...)`. Its docstring becomes the description the model sees.
+   `aseprite.lua("<tool>", ...)`. Use `_in` for files the tool reads, `_edit` for sprites it
+   modifies, `_new` for sprites it creates, and `_out` plus `placeholder.guard_export` and
+   `placeholder.mark` for exports. Its docstring becomes the description the model sees.
 3. Add an integration test in `tests/integration/test_tools.py`.
 
 The Aseprite scripting API is documented at <https://aseprite.org/api>.
@@ -270,6 +331,7 @@ The Aseprite scripting API is documented at <https://aseprite.org/api>.
 | Client cannot start the server | Use the absolute path to `uv` as the command; restart the client. |
 | Changes do not appear in the open editor | Use **File > Revert** in Aseprite. |
 | Tool calls time out on large batches | Increase `ASEPRITE_TIMEOUT` and the client's tool timeout. |
+| `... is final art ...` | The file has no placeholder marker, so the server will not change it. Write a new placeholder (e.g. `palette_swap` with `out_path`), or see [Limitations](docs/placeholder-workflow.md#limitations) for files made before marking existed. |
 
 ## License
 

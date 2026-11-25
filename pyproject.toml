@@ -25,6 +25,7 @@ Issues = "https://github.com/ObsidianTrove/aseprite-mcp/issues"
 
 [project.scripts]
 aseprite-mcp = "aseprite_mcp.server:main"
+aseprite-mcp-audit = "aseprite_mcp.placeholder:audit_main"
 
 [dependency-groups]
 dev = [
