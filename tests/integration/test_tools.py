@@ -5,7 +5,17 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from .support import PALETTE, Client, png_size
+import pytest
+
+from .support import ASEPRITE_AVAILABLE, PALETTE, Client, png_size
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.anyio,
+    pytest.mark.skipif(
+        not ASEPRITE_AVAILABLE, reason="Aseprite not found; set ASEPRITE_PATH to run"
+    ),
+]
 
 SLIME = [
     "......kkkk......",

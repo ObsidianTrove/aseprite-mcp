@@ -16,6 +16,7 @@ from mcp.client.stdio import stdio_client
 from aseprite_mcp.config import find_aseprite
 
 ASEPRITE = find_aseprite()
+ASEPRITE_AVAILABLE = ASEPRITE is not None and ASEPRITE.exists()
 
 PALETTE = [
     "#1a1c2c", "#5d275d", "#b13e53", "#ef7d57", "#ffcd75", "#a7f070", "#38b764", "#257179",

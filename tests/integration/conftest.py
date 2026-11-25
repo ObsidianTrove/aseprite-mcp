@@ -1,5 +1,5 @@
 """Integration fixtures. Each test talks to a real server process over MCP stdio, which
-drives a real Aseprite installation. The suite is skipped when Aseprite is not found."""
+drives a real Aseprite installation."""
 
 from __future__ import annotations
 
@@ -8,17 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from .support import ASEPRITE, Client, connect
-
-
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    skip = pytest.mark.skip(reason="Aseprite not found; set ASEPRITE_PATH to run")
-    for item in items:
-        if "integration" in item.path.parts:
-            item.add_marker(pytest.mark.integration)
-            item.add_marker(pytest.mark.anyio)
-            if ASEPRITE is None or not ASEPRITE.exists():
-                item.add_marker(skip)
+from .support import Client, connect
 
 
 @pytest.fixture
