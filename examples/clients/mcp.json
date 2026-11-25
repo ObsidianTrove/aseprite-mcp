@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "aseprite": {
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/aseprite-mcp", "aseprite-mcp"],
+      "env": {
+        "ASEPRITE_MCP_ROOTS": "/absolute/path/to/your/game/projects"
+      }
+    }
+  }
+}

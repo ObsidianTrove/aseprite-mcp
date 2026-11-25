@@ -1,0 +1,19 @@
+# Add to ~/.codex/config.toml (used by both the Codex CLI and the IDE extension).
+# On Windows, single-quoted TOML strings avoid having to escape backslashes.
+
+[mcp_servers.aseprite]
+command = "uv"
+args = ["run", "--directory", "/absolute/path/to/aseprite-mcp", "aseprite-mcp"]
+startup_timeout_sec = 30
+tool_timeout_sec = 180
+
+[mcp_servers.aseprite.env]
+ASEPRITE_MCP_ROOTS = "/absolute/path/to/your/game/projects"
+
+# Read-only tools run without prompting; tools that write files still ask.
+# Valid values: auto | prompt | writes | approve
+[mcp_servers.aseprite.tools.sprite_info]
+approval_mode = "approve"
+
+[mcp_servers.aseprite.tools.preview]
+approval_mode = "approve"

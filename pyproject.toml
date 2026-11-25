@@ -1,0 +1,53 @@
+[project]
+name = "aseprite-mcp"
+version = "0.1.0"
+description = "MCP server for creating pixel-art game assets with Aseprite and exporting them to Godot 4."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "ObsidianTrove" }]
+requires-python = ">=3.11"
+keywords = ["mcp", "aseprite", "godot", "pixel-art", "gamedev", "ai-agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment",
+    "Topic :: Multimedia :: Graphics",
+]
+dependencies = [
+    "mcp>=2.3,<3",
+]
+
+[project.urls]
+Homepage = "https://github.com/ObsidianTrove/aseprite-mcp"
+Issues = "https://github.com/ObsidianTrove/aseprite-mcp/issues"
+
+[project.scripts]
+aseprite-mcp = "aseprite_mcp.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aseprite_mcp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: end-to-end tests that require a local Aseprite installation",
+]
