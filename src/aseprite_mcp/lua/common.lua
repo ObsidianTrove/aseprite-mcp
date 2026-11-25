@@ -42,7 +42,15 @@ function M.open(path)
   return s
 end
 
+-- Everything this server writes is an AI-generated placeholder. The property is the
+-- machine-readable marker (see placeholder.py); the user data note is what a person sees
+-- in Sprite > Properties. Existing user data is never overwritten.
+M.PLACEHOLDER = "aseprite_mcp_placeholder"
+M.NOTICE = "AI-generated placeholder asset (aseprite-mcp). Replace with final art before release."
+
 function M.save(sprite, path)
+  sprite.properties[M.PLACEHOLDER] = true
+  if sprite.data == nil or sprite.data == "" then sprite.data = M.NOTICE end
   sprite:saveAs(path or sprite.filename)
 end
 
@@ -131,6 +139,7 @@ function M.info(s)
     width = s.width,
     height = s.height,
     color_mode = M.mode_name(s.colorMode),
+    placeholder = s.properties[M.PLACEHOLDER] == true,
     frames = frames,
     layers = layers, -- bottom to top
     tags = tags,

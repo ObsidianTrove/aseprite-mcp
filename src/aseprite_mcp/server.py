@@ -1,7 +1,10 @@
-"""MCP server exposing Aseprite as tools for creating and exporting game assets.
+"""MCP server exposing Aseprite as tools for creating and exporting placeholder game assets.
 
 Every tool call runs a separate headless Aseprite process (`aseprite -b`), so the server
 never interferes with an editor window the user has open.
+
+Everything the server writes is marked as an AI-generated placeholder, and final
+(unmarked) art is never modified or overwritten; see placeholder.py.
 
 Configuration (environment variables):
     ASEPRITE_PATH           Aseprite executable (auto-detected when unset)
@@ -23,7 +26,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 
-from aseprite_mcp import godot
+from aseprite_mcp import godot, placeholder
 from aseprite_mcp.aseprite import Aseprite
 from aseprite_mcp.config import Settings
 from aseprite_mcp.paths import resolve, resolve_output
@@ -34,12 +37,17 @@ aseprite = Aseprite(settings.aseprite, settings.timeout)
 mcp = MCPServer(
     "aseprite",
     instructions=(
-        "Tools for building pixel-art game assets with Aseprite and exporting them to Godot 4. "
+        "Tools for building placeholder pixel-art game assets with Aseprite and exporting them "
+        "to Godot 4. Every file these tools write is marked as an AI-generated placeholder, to "
+        "be replaced by final art before release; final (unmarked) art is never modified or "
+        "overwritten. Keep placeholder sources under art/placeholder/ in the game project, at "
+        "the same relative path the final source will use under art/final/, and export with "
+        "stable names so final art can later replace each file in place. "
         "Frames are 1-based. Colors are '#rrggbb' or '#rrggbbaa'. All paths must be absolute "
         f"and inside: {', '.join(map(str, settings.roots))}. "
         "Typical flow: create_sprite -> draw (the 'rows' op suits pixel art) -> add_frames / "
         "tag_animation -> preview to check the result -> export_godot_spriteframes or "
-        "export_tileset."
+        "export_tileset. placeholder_report lists what still needs final art."
     ),
 )
 
@@ -79,10 +87,22 @@ def tool(*, read_only: bool = False, idempotent: bool = False) -> Callable[[F], 
 
 
 def _in(raw: str) -> str:
+    """A file the tool only reads."""
     return str(resolve(raw, settings.roots, must_exist=True))
 
 
+def _edit(raw: str) -> str:
+    """An existing sprite the tool modifies in place; it must be a placeholder."""
+    return str(placeholder.require_placeholder(resolve(raw, settings.roots, must_exist=True)))
+
+
+def _new(raw: str) -> str:
+    """A sprite the tool creates; it may only replace an existing placeholder."""
+    return str(placeholder.require_placeholder(resolve_output(raw, settings.roots)))
+
+
 def _out(raw: str) -> str:
+    """An export target; see placeholder.guard_export."""
     return str(resolve_output(raw, settings.roots))
 
 
@@ -105,13 +125,13 @@ def create_sprite(
     duration_ms: int = 100,
     layer_name: str = "Layer 1",
 ) -> dict:
-    """Create a new .aseprite file.
+    """Create a new .aseprite file, marked as an AI-generated placeholder.
 
     `palette` is a list of '#rrggbb' colors; using one fixed palette keeps an asset set
     consistent. `background` fills the first layer; omit it for a transparent sprite.
     """
     return aseprite.lua(
-        "create_sprite", path=_out(path), width=width, height=height, frames=frames,
+        "create_sprite", path=_new(path), width=width, height=height, frames=frames,
         color_mode=color_mode, palette=palette, background=background,
         duration_ms=duration_ms, layer_name=layer_name,
     )  # fmt: skip
@@ -119,8 +139,8 @@ def create_sprite(
 
 @tool(read_only=True)
 def sprite_info(path: str) -> dict:
-    """Describe a sprite: size, color mode, frames (1-based, with durations), layers
-    (bottom to top), animation tags and palette."""
+    """Describe a sprite: size, color mode, whether it is a placeholder, frames (1-based,
+    with durations), layers (bottom to top), animation tags and palette."""
     return aseprite.lua("sprite_info", path=_in(path))
 
 
@@ -128,7 +148,7 @@ def sprite_info(path: str) -> dict:
 def add_layer(path: str, name: str, group: bool = False, parent: str | None = None) -> dict:
     """Add a layer (or a layer group when group=True) on top. `parent` places it inside an
     existing group."""
-    return aseprite.lua("add_layer", path=_in(path), name=name, group=group, parent=parent)
+    return aseprite.lua("add_layer", path=_edit(path), name=name, group=group, parent=parent)
 
 
 @tool()
@@ -147,7 +167,7 @@ def add_frames(
     count=0 to change durations only. Existing animation tags are left unchanged.
     """
     return aseprite.lua(
-        "add_frames", path=_in(path), count=count, copy_from=copy_from,
+        "add_frames", path=_edit(path), count=count, copy_from=copy_from,
         duration_ms=duration_ms, duration_from=duration_from, duration_to=duration_to,
     )  # fmt: skip
 
@@ -167,7 +187,7 @@ def tag_animation(
     makes the animation play through and stop. A tag with the same name is replaced.
     """
     return aseprite.lua(
-        "tag_animation", path=_in(path), name=name, from_frame=from_frame,
+        "tag_animation", path=_edit(path), name=name, from_frame=from_frame,
         to_frame=to_frame, direction=direction, repeat=repeat,
     )  # fmt: skip
 
@@ -192,7 +212,7 @@ def draw(
       {"op":"circle","cx":8,"cy":8,"r":4,"color":"#000000","fill":false}
       {"op":"clear"}  or  {"op":"clear","color":"#00000000"}
     """
-    return aseprite.lua("draw", path=_in(path), ops=ops, layer=layer, frame=frame, frames=frames)
+    return aseprite.lua("draw", path=_edit(path), ops=ops, layer=layer, frame=frame, frames=frames)
 
 
 @tool()
@@ -207,7 +227,7 @@ def set_palette(
     .aseprite). With to_indexed=True the sprite is converted to indexed mode and every
     pixel snaps to its nearest palette color."""
     return aseprite.lua(
-        "set_palette", path=_in(path), colors=colors,
+        "set_palette", path=_edit(path), colors=colors,
         palette_file=_in(palette_file) if palette_file else None,
         to_indexed=to_indexed, dithering=dithering,
     )  # fmt: skip
@@ -217,10 +237,11 @@ def set_palette(
 def palette_swap(path: str, mapping: dict[str, str], out_path: str | None = None) -> dict:
     """Recolor exact colors across all layers and frames, e.g. {"#38b764": "#b13e53"}.
     Writes to `out_path`, or overwrites the source when omitted. Useful for character
-    variants, team colors and seasonal tilesets."""
+    variants, team colors and seasonal tilesets. The result is a placeholder; a final-art
+    source can be recolored only into a new `out_path`."""
     return aseprite.lua(
-        "palette_swap", path=_in(path), mapping=mapping,
-        out_path=_out(out_path) if out_path else None,
+        "palette_swap", path=_in(path) if out_path else _edit(path), mapping=mapping,
+        out_path=_new(out_path) if out_path else None,
     )  # fmt: skip
 
 
@@ -237,10 +258,11 @@ def import_image(
     """Import a PNG, JPG or GIF as an .aseprite file.
 
     Resizes with nearest-neighbor sampling (give only width or height to keep the aspect
-    ratio), then snaps to a fixed palette (`colors`) or quantizes to `max_colors`.
+    ratio), then snaps to a fixed palette (`colors`) or quantizes to `max_colors`. The new
+    file is marked as a placeholder.
     """
     return aseprite.lua(
-        "import_image", src=_in(src), out_path=_out(out_path), width=width, height=height,
+        "import_image", src=_in(src), out_path=_new(out_path), width=width, height=height,
         colors=colors, max_colors=max_colors, dithering=dithering,
     )  # fmt: skip
 
@@ -276,14 +298,21 @@ def export_spritesheet(
 ) -> dict:
     """Export a sprite sheet PNG, plus optional Aseprite JSON (frame rectangles, durations,
     tags). Filter by `tag` or `layer`. Keep scale=1 for Godot and scale the viewport
-    instead."""
+    instead. Exports of a placeholder sprite are marked as placeholders too."""
+    src = Path(_in(path))
     png = Path(_out(out_png))
     data = Path(_out(out_json)) if out_json else None
+    is_placeholder = placeholder.is_placeholder(src)
+    placeholder.guard_export([png, *([data] if data else [])], is_placeholder)
     sheet = aseprite.export_sheet(
-        Path(_in(path)), png, data, sheet_type=sheet_type, tag=tag, layer=layer,
+        src, png, data, sheet_type=sheet_type, tag=tag, layer=layer,
         scale=scale, padding=padding, trim=trim, columns=columns,
     )  # fmt: skip
-    result: dict[str, Any] = {"png": str(png)}
+    if is_placeholder:
+        for file in (png, data):
+            if file:
+                placeholder.mark(file)
+    result: dict[str, Any] = {"png": str(png), "placeholder": is_placeholder}
     if sheet:
         result.update(
             json=str(data),
@@ -300,16 +329,23 @@ def _export_spriteframes(src: Path, project: Path, target_dir: str, name: str, p
         raise ValueError(f"target_dir '{target_dir}' must be inside the Godot project")
     if Path(name).name != name:
         raise ValueError(f"name '{name}' must be a plain file name without folders")
-    folder.mkdir(parents=True, exist_ok=True)
     png, tres = folder / f"{name}.png", folder / f"{name}.tres"
+    is_placeholder = placeholder.is_placeholder(src)
+    placeholder.guard_export([png, tres], is_placeholder)
+    folder.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="aseprite-mcp-") as tmp:
         sheet = aseprite.export_sheet(src, png, Path(tmp) / "sheet.json", padding=padding)
-    text, animations = godot.spriteframes_tres(sheet, godot.res_path(project, png))
+    if is_placeholder:
+        placeholder.mark(png)
+    text, animations = godot.spriteframes_tres(
+        sheet, godot.res_path(project, png), placeholder=is_placeholder
+    )
     tres.write_text(text, encoding="utf-8")
     return {
         "png": godot.res_path(project, png),
         "spriteframes": godot.res_path(project, tres),
         "animations": animations,
+        "placeholder": is_placeholder,
     }
 
 
@@ -326,6 +362,10 @@ def export_godot_spriteframes(
     Each Aseprite tag becomes an animation with per-frame timing preserved; reverse and
     ping-pong directions are baked into the frame order, and tags with a repeat count do
     not loop. Assign the .tres to an AnimatedSprite2D.
+
+    Exports of a placeholder sprite are marked as placeholders. Final art exported later
+    with the same `target_dir` and `name` replaces them in place, so scenes keep working;
+    a placeholder export never overwrites a final one.
     """
     src = Path(_in(path))
     return _export_spriteframes(
@@ -350,22 +390,30 @@ def export_tileset(
 
     The source is a tilemap layer's tileset (pass `layer`), or the flattened `frame`
     sliced into a tile_w x tile_h grid. When `godot_project` is given, `out_png` must be
-    inside it and a matching TileSet .tres is written next to the PNG.
+    inside it and a matching TileSet .tres is written next to the PNG. Exports of a
+    placeholder sprite are marked as placeholders too.
     """
+    src = Path(_in(path))
     png = Path(_out(out_png))
+    project = _godot_project(godot_project) if godot_project else None
+    tres = png.with_suffix(".tres")
+    is_placeholder = placeholder.is_placeholder(src)
+    placeholder.guard_export([png, *([tres] if project else [])], is_placeholder)
     info = aseprite.lua(
-        "export_tileset", path=_in(path), out_png=str(png), tile_w=tile_w, tile_h=tile_h,
+        "export_tileset", path=str(src), out_png=str(png), tile_w=tile_w, tile_h=tile_h,
         layer=layer, frame=frame, extrude=extrude, columns=columns,
     )  # fmt: skip
-    if godot_project:
-        project = _godot_project(godot_project)
-        tres = png.with_suffix(".tres")
+    if is_placeholder:
+        placeholder.mark(png)
+    info["placeholder"] = is_placeholder
+    if project:
         tres.write_text(
             godot.tileset_tres(
                 godot.res_path(project, png),
                 (info["tile_w"], info["tile_h"]),
                 info["extrude"],
                 [tuple(t) for t in info["tiles"]],
+                placeholder=is_placeholder,
             ),
             encoding="utf-8",
         )
@@ -377,19 +425,43 @@ def export_tileset(
 def batch_export(src_dir: str, godot_project: str, target_dir: str = "assets/sprites") -> dict:
     """Re-export every .aseprite/.ase file under `src_dir` (recursively) into the Godot
     project as SpriteFrames, mirroring the folder structure. Failures are reported per
-    file without stopping the batch."""
+    file without stopping the batch.
+
+    Run it on art/final/ to drop final art in over the placeholders. A placeholder whose
+    export already holds final art is listed under `kept_final` instead of overwriting it."""
     root = Path(_in(src_dir))
     project = _godot_project(godot_project)
     exported: list[str] = []
+    placeholders: list[str] = []
+    kept_final: list[str] = []
     failed: dict[str, str] = {}
     for file in sorted([*root.rglob("*.aseprite"), *root.rglob("*.ase")]):
         subdir = Path(target_dir) / file.parent.relative_to(root)
         try:
             result = _export_spriteframes(file, project, str(subdir), file.stem, padding=1)
-            exported.append(result["spriteframes"])
+        except placeholder.FinalArtError:
+            kept_final.append(str(file))
         except Exception as e:
             failed[str(file)] = f"{type(e).__name__}: {e}"
-    return {"exported": exported, "failed": failed}
+        else:
+            exported.append(result["spriteframes"])
+            if result["placeholder"]:
+                placeholders.append(result["spriteframes"])
+    return {
+        "exported": exported,
+        "placeholders": placeholders,
+        "kept_final": kept_final,
+        "failed": failed,
+    }
+
+
+@tool(read_only=True)
+def placeholder_report(paths: list[str]) -> dict:
+    """List every AI-generated placeholder under the given files or folders: .aseprite
+    sources, PNGs, Godot .tres resources and sprite sheet JSON. Each entry includes the
+    sizes and animation names a final replacement must match. Point it at a game project
+    to see what still needs final art before release."""
+    return placeholder.report([Path(_in(p)) for p in paths])
 
 
 @tool()
@@ -397,8 +469,9 @@ def run_lua(code: str, params: dict[str, Any] | None = None) -> dict:
     """Run arbitrary Aseprite Lua. Disabled unless ASEPRITE_MCP_ALLOW_LUA=1.
 
     `code` is the body of `function(params)` and may return a JSON-serializable value,
-    which is returned as {"result": value}. The full Aseprite scripting API is available:
-    https://aseprite.org/api
+    which is returned as {"result": value}. Files saved by this code are NOT marked as
+    placeholders automatically; set sprite.properties.aseprite_mcp_placeholder = true.
+    The full Aseprite scripting API is available: https://aseprite.org/api
     """
     if not settings.allow_lua:
         raise PermissionError(

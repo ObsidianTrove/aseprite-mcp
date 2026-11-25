@@ -5,6 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+# Marks a resource as an AI-generated placeholder; game code can check it with
+# `resource.get_meta("placeholder", false)`. Detected by placeholder.is_placeholder.
+PLACEHOLDER_META = "metadata/placeholder = true\n"
+
 
 def project_root(path: Path) -> Path:
     """Validate that `path` is a Godot project folder and return it."""
@@ -42,13 +46,15 @@ def frame_order(start: int, end: int, direction: str) -> list[int]:
     return idx
 
 
-def spriteframes_tres(sheet: dict[str, Any], texture: str) -> tuple[str, list[str]]:
+def spriteframes_tres(
+    sheet: dict[str, Any], texture: str, *, placeholder: bool = False
+) -> tuple[str, list[str]]:
     """Build a SpriteFrames resource from Aseprite `--format json-array` sheet data.
 
     Every tag becomes an animation (or a single `default` animation if there are no tags).
     Godot plays an animation at `speed` FPS and scales each frame by its relative
     `duration`, so per-frame timing from Aseprite is preserved exactly. Tags with a repeat
-    count are exported as non-looping.
+    count are exported as non-looping. `placeholder` adds `metadata/placeholder = true`.
 
     Returns the resource text and the list of animation names.
     """
@@ -94,6 +100,7 @@ def spriteframes_tres(sheet: dict[str, Any], texture: str) -> tuple[str, list[st
         + "\n[resource]\nanimations = ["
         + ", ".join(animations)
         + "]\n"
+        + (PLACEHOLDER_META if placeholder else "")
     )
     return text, names
 
@@ -103,8 +110,11 @@ def tileset_tres(
     tile_size: tuple[int, int],
     extrude: int,
     tiles: list[tuple[int, int]],
+    *,
+    placeholder: bool = False,
 ) -> str:
-    """Build a TileSet with one atlas source whose margins/separation match the extrusion."""
+    """Build a TileSet with one atlas source whose margins/separation match the extrusion.
+    `placeholder` adds `metadata/placeholder = true`."""
     tw, th = tile_size
     e = extrude
     cells = "\n".join(f"{x}:{y}/0 = 0" for x, y in tiles)
@@ -119,5 +129,5 @@ def tileset_tres(
         f"{cells}\n\n"
         "[resource]\n"
         f"tile_size = Vector2i({tw}, {th})\n"
-        'sources/0 = SubResource("atlas")\n'
+        'sources/0 = SubResource("atlas")\n' + (PLACEHOLDER_META if placeholder else "")
     )

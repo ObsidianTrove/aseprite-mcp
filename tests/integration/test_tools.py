@@ -65,10 +65,11 @@ async def test_lists_all_tools_with_safety_annotations(client: Client) -> None:
     assert set(tools) == {
         "create_sprite", "sprite_info", "add_layer", "add_frames", "tag_animation", "draw",
         "set_palette", "palette_swap", "import_image", "preview", "export_spritesheet",
-        "export_godot_spriteframes", "export_tileset", "batch_export", "run_lua",
+        "export_godot_spriteframes", "export_tileset", "batch_export", "placeholder_report",
+        "run_lua",
     }  # fmt: skip
     read_only = {name for name, t in tools.items() if t.annotations.read_only_hint}
-    assert read_only == {"sprite_info", "preview"}
+    assert read_only == {"sprite_info", "preview", "placeholder_report"}
 
 
 # ----------------------------------------------------------------------------- authoring
@@ -215,6 +216,7 @@ async def test_export_godot_spriteframes(
         "png": "res://assets/sprites/slime.png",
         "spriteframes": "res://assets/sprites/slime.tres",
         "animations": ["idle", "hurt"],
+        "placeholder": True,
     }
     folder = godot_project / "assets" / "sprites"
     assert sorted(p.name for p in folder.iterdir()) == ["slime.png", "slime.tres"]
@@ -257,6 +259,131 @@ async def test_batch_export_reports_failures_per_file(
     result = await client.call("batch_export", src_dir=str(art), godot_project=str(godot_project))
     assert result["exported"] == ["res://assets/sprites/enemies/slime.tres"]
     assert list(result["failed"]) == [str(art / "broken.aseprite")]
+
+
+# ----------------------------------------------------------------------------- placeholders
+
+
+async def make_final(lua_client: Client, path: Path) -> None:
+    """Stand-in for hand-made final art: a sprite saved without the placeholder marker."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    await lua_client.call(
+        "run_lua",
+        code="""
+            local s = Sprite(16, 16)
+            s:newEmptyFrame()
+            s:newTag(1, 2).name = "idle"
+            s:saveAs(params.path)
+        """,
+        params={"path": str(path)},
+    )
+
+
+async def test_everything_written_is_marked(
+    client: Client, workspace: Path, godot_project: Path
+) -> None:
+    slime = workspace / "art" / "placeholder" / "slime.aseprite"
+    await make_slime(client, slime)
+    assert (await client.call("sprite_info", path=str(slime)))["placeholder"] is True
+
+    variant = workspace / "art" / "placeholder" / "slime_red.aseprite"
+    await client.call(
+        "palette_swap", path=str(slime), out_path=str(variant), mapping={"#38b764": "#b13e53"}
+    )
+    sheet_png, sheet_json = workspace / "out" / "slime.png", workspace / "out" / "slime.json"
+    sheet = await client.call(
+        "export_spritesheet", path=str(slime), out_png=str(sheet_png), out_json=str(sheet_json)
+    )
+    assert sheet["placeholder"] is True
+    imported = await client.call(
+        "import_image", src=str(sheet_png), out_path=str(workspace / "imported.aseprite")
+    )
+    assert imported["placeholder"] is True
+    await client.call(
+        "export_godot_spriteframes", path=str(slime), godot_project=str(godot_project)
+    )
+    tiles = await client.call(
+        "export_tileset", path=str(slime), out_png=str(godot_project / "tiles" / "t.png"),
+        tile_w=8, tile_h=8, godot_project=str(godot_project),
+    )  # fmt: skip
+    assert tiles["placeholder"] is True
+
+    tres = (godot_project / "assets" / "sprites" / "slime.tres").read_text(encoding="utf-8")
+    assert tres.endswith("metadata/placeholder = true\n")
+    report = await client.call("placeholder_report", paths=[str(workspace)])
+    assert sorted(Path(f["path"]).name for f in report["placeholders"]) == [
+        "imported.aseprite", "slime.aseprite", "slime.json", "slime.png", "slime.png",
+        "slime.tres", "slime_red.aseprite", "t.png", "t.tres",
+    ]  # fmt: skip
+    by_kind = {f["kind"]: f for f in report["placeholders"]}
+    assert by_kind["Godot SpriteFrames"]["details"] == {
+        "animations": ["idle", "hurt"],
+        "frame_size": "16x16",
+    }
+    by_path = {f["path"]: f for f in report["placeholders"]}
+    assert by_path[str(slime)]["details"] == {"width": 16, "height": 16, "frames": 3}
+
+
+async def test_final_art_is_never_modified(lua_client: Client, workspace: Path) -> None:
+    final = workspace / "art" / "final" / "hero.aseprite"
+    await make_final(lua_client, final)
+    before = final.read_bytes()
+    assert (await lua_client.call("sprite_info", path=str(final)))["placeholder"] is False
+
+    for tool, args in [
+        ("draw", {"ops": [{"op": "clear"}]}),
+        ("add_frames", {"count": 1}),
+        ("tag_animation", {"name": "walk", "from_frame": 1, "to_frame": 1}),
+        ("palette_swap", {"mapping": {"#000000": "#ffffff"}}),
+        ("create_sprite", {"width": 8, "height": 8}),
+    ]:
+        message = await lua_client.error(tool, path=str(final), **args)
+        assert "final art" in message, tool
+    assert final.read_bytes() == before
+
+    # Deriving a new placeholder from final art is allowed.
+    variant = workspace / "art" / "placeholder" / "hero_alt.aseprite"
+    await lua_client.call(
+        "palette_swap", path=str(final), out_path=str(variant), mapping={"#000000": "#ffffff"}
+    )
+    assert (await lua_client.call("sprite_info", path=str(variant)))["placeholder"] is True
+    assert final.read_bytes() == before
+
+
+async def test_final_art_replaces_placeholder_in_place(
+    lua_client: Client, workspace: Path, godot_project: Path
+) -> None:
+    placeholders, finals = workspace / "art" / "placeholder", workspace / "art" / "final"
+    await make_slime(lua_client, placeholders / "enemies" / "slime.aseprite")
+    first = await lua_client.call(
+        "batch_export", src_dir=str(placeholders), godot_project=str(godot_project)
+    )
+    assert first["placeholders"] == ["res://assets/sprites/enemies/slime.tres"]
+    exported = godot_project / "assets" / "sprites" / "enemies"
+    report = await lua_client.call("placeholder_report", paths=[str(godot_project)])
+    assert report["count"] == 2  # slime.png + slime.tres
+
+    # The artist drops final art in at the same relative path and re-exports.
+    await make_final(lua_client, finals / "enemies" / "slime.aseprite")
+    second = await lua_client.call(
+        "batch_export", src_dir=str(finals), godot_project=str(godot_project)
+    )
+    assert second["exported"] == first["exported"]  # same res:// paths: scenes keep working
+    assert second["placeholders"] == []
+    assert (await lua_client.call("placeholder_report", paths=[str(godot_project)]))["count"] == 0
+
+    # Re-exporting the placeholders later must not undo the swap.
+    third = await lua_client.call(
+        "batch_export", src_dir=str(placeholders), godot_project=str(godot_project)
+    )
+    assert third["exported"] == []
+    assert third["kept_final"] == [str(placeholders / "enemies" / "slime.aseprite")]
+    assert "metadata/placeholder" not in (exported / "slime.tres").read_text(encoding="utf-8")
+    message = await lua_client.error(
+        "export_godot_spriteframes", path=str(placeholders / "enemies" / "slime.aseprite"),
+        godot_project=str(godot_project), target_dir="assets/sprites/enemies",
+    )  # fmt: skip
+    assert "will not be replaced by a placeholder export" in message
 
 
 # ----------------------------------------------------------------------------- errors
